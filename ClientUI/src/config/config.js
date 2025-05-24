@@ -1,5 +1,5 @@
 const CONFIG = {
-    "BACKEND_URI" : "http://localhost:3000",
+    "BACKEND_URI" : "http://localhost:5000",
     "PYTHON_ENVIRONMENT" : "/home/geralt/.FedLearn"
 }
 
