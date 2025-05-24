@@ -11,6 +11,11 @@ function App() {
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [contribScreen, setContribScreen] = useState<boolean>(false);
 
+  // Reset contribution screen when project changes
+  React.useEffect(() => {
+    setContribScreen(false);
+  }, [currentProject]);
+
   return (
     <>
       {token ? (
@@ -21,7 +26,7 @@ function App() {
               <Contrib
                 token={token}
                 currentProject={currentProject}
-                setCurrentProject={setCurrentProject}
+                setContribScreen={setContribScreen}
               />
             ) : (
               <Dashboard

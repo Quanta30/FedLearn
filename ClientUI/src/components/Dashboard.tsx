@@ -17,7 +17,12 @@ interface DashboardProps {
   setContribScreen: (value: boolean) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ token, currentProject, setCurrentProject, setContribScreen }) => {
+const Dashboard: React.FC<DashboardProps> = ({ 
+  token, 
+  currentProject, 
+  setCurrentProject, 
+  setContribScreen 
+}) => {
   const [projectName, setProjectName] = useState('');
   const [collaboratorsCount, setCollaboratorsCount] = useState(0);
   const [modelAccuracy, setModelAccuracy] = useState('');
@@ -54,21 +59,37 @@ const Dashboard: React.FC<DashboardProps> = ({ token, currentProject, setCurrent
           setCollaboratorsCount((projectData.collaborators && projectData.collaborators.length) || 0);
           setModelAccuracy(projectData.accuracy || 'N/A');
           setDescription(projectData.description || 'No Description Available');
+          
+          // Add null checks for contributions and user objects
           setHistory((projectData.contributions || []).map(contribution => ({
-            username: contribution.user.username || 'Unknown User',
-            profileLink: `/users/${contribution.user._id || '#'}`
-          })));
-          setCurrentContributors([
-            {
-              username: projectData.owner.username || 'Unknown User',
+            username: (contribution.user && contribution.user.username) || 'Unknown User',
+            profileLink: `/users/${(contribution.user && contribution.user._id) || '#'}`
+          })).filter(item => item.username !== 'Unknown User')); // Filter out invalid entries
+          
+          // Add null checks for owner and collaborators
+          const contributors = [];
+          
+          // Add owner if exists
+          if (projectData.owner && projectData.owner.username) {
+            contributors.push({
+              username: projectData.owner.username,
               profileLink: `/users/${projectData.owner._id || '#'}`,
               isOwner: true
-            },
-            ...(projectData.collaborators || []).map(collaborator => ({
-              username: collaborator.username || 'Unknown User',
-              profileLink: `/users/${collaborator._id || '#'}`
-            }))
-          ]);
+            });
+          }
+          
+          // Add collaborators if they exist
+          if (projectData.collaborators && Array.isArray(projectData.collaborators)) {
+            const validCollaborators = projectData.collaborators
+              .filter(collaborator => collaborator && collaborator.username)
+              .map(collaborator => ({
+                username: collaborator.username,
+                profileLink: `/users/${collaborator._id || '#'}`
+              }));
+            contributors.push(...validCollaborators);
+          }
+          
+          setCurrentContributors(contributors);
           setEditProjectDetails({
             name: projectData.name,
             description: projectData.description,
@@ -229,7 +250,26 @@ const Dashboard: React.FC<DashboardProps> = ({ token, currentProject, setCurrent
   };
 
   return (
-    <div className="min-h-screen bg-base-200 p-4">
+    <div className="container mx-auto px-4 py-8">
+      {/* Navigation Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center">
+          <button
+            onClick={() => setCurrentProject(null)}
+            className="mr-4 px-3 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
+          >
+            ← Back to Projects
+          </button>
+          <h1 className="text-3xl font-bold text-gray-800">Project Dashboard</h1>
+        </div>
+        <button
+          onClick={() => setContribScreen(true)}
+          className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition-colors font-medium"
+        >
+          Contribute to Project
+        </button>
+      </div>
+
       <div className="navbar bg-base-100 rounded-box shadow-lg mb-4">
         <div className="flex-1">
           <h1 className="text-2xl font-bold px-4">{projectName}</h1>

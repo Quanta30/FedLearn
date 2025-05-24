@@ -9,6 +9,7 @@ interface ContribProps {
   currentProject: {
     name: string;
   };
+  setContribScreen: (value: boolean) => void;
 }
 
 interface TrainingParams {
@@ -21,7 +22,7 @@ interface TrainingParams {
   unitsPerLayer: number;
 }
 
-const Contrib: React.FC<ContribProps> = ({ token, currentProject }) => {
+const Contrib: React.FC<ContribProps> = ({ token, currentProject, setContribScreen }) => {
   const [trainingDataDir, setTrainingDataDir] = useState<FileList | null>(null);
   const [trainingParams, setTrainingParams] = useState<TrainingParams>({
     epochs: 10,
@@ -73,21 +74,37 @@ const Contrib: React.FC<ContribProps> = ({ token, currentProject }) => {
           setCollaboratorsCount((projectData.collaborators && projectData.collaborators.length) || 0);
           setModelAccuracy(projectData.accuracy || 'N/A');
           setDescription(projectData.description || 'No Description Available');
+          
+          // Add null checks for contributions and user objects
           setHistory((projectData.contributions || []).map(contribution => ({
-            username: contribution.user.username || 'Unknown User',
-            profileLink: `/users/${contribution.user._id || '#'}`
-          })));
-          setCurrentContributors([
-            {
-              username: projectData.owner.username || 'Unknown User',
+            username: (contribution.user && contribution.user.username) || 'Unknown User',
+            profileLink: `/users/${(contribution.user && contribution.user._id) || '#'}`
+          })).filter(item => item.username !== 'Unknown User')); // Filter out invalid entries
+          
+          // Add null checks for owner and collaborators
+          const contributors = [];
+          
+          // Add owner if exists
+          if (projectData.owner && projectData.owner.username) {
+            contributors.push({
+              username: projectData.owner.username,
               profileLink: `/users/${projectData.owner._id || '#'}`,
               isOwner: true
-            },
-            ...(projectData.collaborators || []).map(collaborator => ({
-              username: collaborator.username || 'Unknown User',
-              profileLink: `/users/${collaborator._id || '#'}`
-            }))
-          ]);
+            });
+          }
+          
+          // Add collaborators if they exist
+          if (projectData.collaborators && Array.isArray(projectData.collaborators)) {
+            const validCollaborators = projectData.collaborators
+              .filter(collaborator => collaborator && collaborator.username)
+              .map(collaborator => ({
+                username: collaborator.username,
+                profileLink: `/users/${collaborator._id || '#'}`
+              }));
+            contributors.push(...validCollaborators);
+          }
+          
+          setCurrentContributors(contributors);
           setEditProjectDetails({
             name: projectData.name,
             description: projectData.description,
@@ -134,15 +151,28 @@ const Contrib: React.FC<ContribProps> = ({ token, currentProject }) => {
   const downloadExistingModel = async (): Promise<ArrayBuffer | null> => {
     try {
       setStatusMessage('Downloading existing model...');
+      console.log('Downloading existing model...');
+      
       const response = await axios.get(
         `${CONFIG.BACKEND_URI}/project/${projectName}/model`,
         {
           headers: { Authorization: `Bearer ${token}` },
-          responseType: 'arraybuffer'
+          responseType: 'arraybuffer' // Keep as arraybuffer since backend serves HDF5
         }
       );
-      return response.data;
-    } catch (error) {
+      
+      // Check if the response is HDF5 format (starts with PK) or JSON
+      const uint8Array = new Uint8Array(response.data);
+      const header = String.fromCharCode(...uint8Array.slice(0, 2));
+      
+      if (header === 'PK') {
+        console.log('Downloaded model is in HDF5 format, skipping for now');
+        return null; // Skip HDF5 models for now
+      } else {
+        console.log('Model downloaded successfully');
+        return response.data;
+      }
+    } catch (error: any) {
       console.log('No existing model found, starting fresh training');
       return null;
     }
@@ -159,6 +189,7 @@ const Contrib: React.FC<ContribProps> = ({ token, currentProject }) => {
     setIsSubmitting(true);
     setTrainingProgress(0);
     setStatusMessage('Starting training process...');
+    console.log('Starting training process...');
 
     try {
       // Download existing model if available
@@ -186,9 +217,10 @@ const Contrib: React.FC<ContribProps> = ({ token, currentProject }) => {
       // Upload the trained model
       setStatusMessage('Uploading trained model...');
       const formData = new FormData();
-      formData.append('file', modelBlob, 'model.h5');
+      formData.append('file', modelBlob, `model_${Date.now()}.zip`); // Changed to .zip extension
       formData.append('sha1', sha1Hash);
       formData.append('metadata', JSON.stringify(metadata));
+      formData.append('format', 'tensorflowjs'); // Add format identifier
 
       const response = await axios.post(
         `${CONFIG.BACKEND_URI}/project/${projectName}/contribute`,
@@ -212,8 +244,17 @@ const Contrib: React.FC<ContribProps> = ({ token, currentProject }) => {
       
     } catch (error: any) {
       console.error('Error during contribution:', error);
-      setStatusMessage('An error occurred during contribution.');
-      alert('Error during contribution. Please check the console for details.');
+      
+      // More detailed error message
+      if (error.message.includes('dimension')) {
+        setStatusMessage('Tensor shape error during training. Please check your training data format.');
+      } else if (error.message.includes('memory')) {
+        setStatusMessage('Memory error during training. Try reducing batch size or dataset size.');
+      } else {
+        setStatusMessage('An error occurred during contribution.');
+      }
+      
+      alert(`Error during contribution: ${error.message}\nPlease check the console for details.`);
     } finally {
       setIsSubmitting(false);
     }
@@ -221,7 +262,26 @@ const Contrib: React.FC<ContribProps> = ({ token, currentProject }) => {
 
   return (
     <div className="max-w-2xl mx-auto mt-8 p-6 bg-white shadow-md rounded">
-      <h2 className="text-2xl font-semibold mb-4">Contribute to Project</h2>
+      {/* Navigation Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center">
+          <button
+            onClick={() => setContribScreen(false)}
+            className="mr-4 px-3 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
+          >
+            ← Back to Dashboard
+          </button>
+          <h2 className="text-2xl font-semibold">Contribute to Project</h2>
+        </div>
+      </div>
+
+      {/* Project Info */}
+      <div className="mb-4 p-4 bg-blue-50 rounded">
+        <p className="text-lg font-medium text-blue-800">
+          Contributing to: <span className="font-bold">{projectName}</span>
+        </p>
+      </div>
+
       <form onSubmit={handleSubmit}>
         {/* Training Data Directory Input */}
         <div className="mb-4">

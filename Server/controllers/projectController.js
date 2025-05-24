@@ -16,6 +16,20 @@ const createProject = async (req, res) => {
     const owner = req.email;
 
     try {
+        // Log incoming request data for debugging
+        console.log('Received createProject request:');
+        console.log('Request body:', req.body);
+        console.log('Owner email:', owner);
+
+        // Validate required fields
+        if (!name || !name.trim()) {
+            return res.status(400).json({ message: 'Project name is required.' });
+        }
+
+        if (!owner) {
+            return res.status(400).json({ message: 'User authentication required.' });
+        }
+
         const existingProject = await Project.findOne({ name });
         if (existingProject) {
             return res.status(400).json({ message: 'Project name must be unique.' });
@@ -26,19 +40,56 @@ const createProject = async (req, res) => {
             return res.status(404).json({ message: 'User not found.' });
         }
 
+        // Set default values for MNIST training if parameters are undefined
+        // Ensure proper type conversion for numeric values
+        const projectConfig = {
+            activation_function: activation_function || 'relu',
+            dropout_rate: (dropout_rate !== undefined && dropout_rate !== null && dropout_rate !== '') ? 
+                parseFloat(dropout_rate) : 0.2,
+            combining_method: combining_method || 'average',
+            input_shape: input_shape || '28,28',
+            num_layers: (num_layers !== undefined && num_layers !== null && num_layers !== '') ? 
+                parseInt(num_layers) : 3,
+            units_per_layer: (units_per_layer !== undefined && units_per_layer !== null && units_per_layer !== '') ? 
+                parseInt(units_per_layer) : 128,
+            num_classes: (num_classes !== undefined && num_classes !== null && num_classes !== '') ? 
+                parseInt(num_classes) : 10
+        };
+
+        console.log('Processed config:', projectConfig);
+
+        // Validate numeric values
+        if (isNaN(projectConfig.dropout_rate) || projectConfig.dropout_rate < 0 || projectConfig.dropout_rate > 1) {
+            return res.status(400).json({ message: 'Dropout rate must be a number between 0 and 1.' });
+        }
+
+        if (isNaN(projectConfig.num_layers) || projectConfig.num_layers < 1) {
+            return res.status(400).json({ message: 'Number of layers must be a positive integer.' });
+        }
+
+        if (isNaN(projectConfig.units_per_layer) || projectConfig.units_per_layer < 1) {
+            return res.status(400).json({ message: 'Units per layer must be a positive integer.' });
+        }
+
+        if (isNaN(projectConfig.num_classes) || projectConfig.num_classes < 1) {
+            return res.status(400).json({ message: 'Number of classes must be a positive integer.' });
+        }
+
         const newProject = new Project({
-            name,
-            description,
+            name: name.trim(),
+            description: description || '',
             owner: user._id,
-            isPrivate,
-            activation_function,
-            dropout_rate,
-            combining_method,
-            input_shape,
-            num_layers,
-            units_per_layer,
-            num_classes
+            isPrivate: isPrivate !== undefined ? Boolean(isPrivate) : false,
+            activation_function: projectConfig.activation_function,
+            dropout_rate: projectConfig.dropout_rate,
+            combining_method: projectConfig.combining_method,
+            input_shape: projectConfig.input_shape,
+            num_layers: projectConfig.num_layers,
+            units_per_layer: projectConfig.units_per_layer,
+            num_classes: projectConfig.num_classes
         });
+
+        console.log('Created project object:', newProject);
 
         // Create project folder structure
         const userFolderPath = path.join(__dirname, '..', 'data', 'users', user.username);
@@ -57,15 +108,15 @@ const createProject = async (req, res) => {
             fs.mkdirSync(pyFolderPath, { recursive: true });
         }
 
-        // Create config.txt file
+        // Create config.txt file with validated values
         const configContent = `
-activation_function=${activation_function}
-dropout_rate=${dropout_rate}
-combining_method=${combining_method}
-input_shape=${input_shape}
-num_layers=${num_layers}
-units_per_layer=${units_per_layer}
-num_classes=${num_classes}
+activation_function=${projectConfig.activation_function}
+dropout_rate=${projectConfig.dropout_rate}
+combining_method=${projectConfig.combining_method}
+input_shape=${projectConfig.input_shape}
+num_layers=${projectConfig.num_layers}
+units_per_layer=${projectConfig.units_per_layer}
+num_classes=${projectConfig.num_classes}
         `;
         fs.writeFileSync(path.join(pyFolderPath, 'config.txt'), configContent.trim());
 
@@ -103,7 +154,12 @@ num_classes=${num_classes}
             }
         });
     } catch (error) {
-        res.status(400).json({ message: 'Error creating project', error });
+        console.error('Error in createProject:', error);
+        res.status(400).json({ 
+            message: 'Error creating project', 
+            error: error.message,
+            details: error.stack 
+        });
     }
 };
 
@@ -319,31 +375,39 @@ const getModel = async (req, res) => {
 
         const userFolderPath = path.join(__dirname, '..', 'py', 'users', project.owner.username);
         const projectFolderPath = path.join(userFolderPath, projectName);
-        const modelConfigPath = path.join(projectFolderPath, 'model_config.json');
-        const modelWeightsPath = path.join(projectFolderPath, 'model.weights.h5');
+        const modelDir = path.join(projectFolderPath, 'model');
 
         // Add debugging logs
         console.log(`Looking for model files in: ${projectFolderPath}`);
-        console.log(`Model config path: ${modelConfigPath}`);
-        console.log(`Model weights path: ${modelWeightsPath}`);
-        console.log(`Config exists: ${fs.existsSync(modelConfigPath)}`);
-        console.log(`Weights exists: ${fs.existsSync(modelWeightsPath)}`);
         
-        // List all files in the project directory for debugging
-        if (fs.existsSync(projectFolderPath)) {
-            const filesInProject = fs.readdirSync(projectFolderPath);
-            console.log(`Files in project directory: ${filesInProject.join(', ')}`);
-        } else {
+        // Check if project directory exists
+        if (!fs.existsSync(projectFolderPath)) {
             console.log(`Project directory does not exist: ${projectFolderPath}`);
+            return res.status(404).json({ message: 'Project directory not found.' });
         }
 
-        if (!fs.existsSync(modelConfigPath) || !fs.existsSync(modelWeightsPath)) {
+        // List all files in the project directory for debugging
+        const filesInProject = fs.readdirSync(projectFolderPath);
+        console.log(`Files in project directory: ${filesInProject.join(', ')}`);
+
+        // Check if model directory exists
+        if (!fs.existsSync(modelDir)) {
+            console.log(`Model directory does not exist: ${modelDir}`);
+            return res.status(404).json({ message: 'No model has been created yet. Make a contribution first.' });
+        }
+
+        const filesInModelDir = fs.readdirSync(modelDir);
+        console.log(`Files in model directory: ${filesInModelDir.join(', ')}`);
+
+        // Check for required TensorFlow.js files
+        const modelJsonPath = path.join(modelDir, 'model.json');
+        if (!fs.existsSync(modelJsonPath)) {
             return res.status(404).json({ message: 'Model files not found.' });
         }
 
+        // Create zip of the entire model directory
         const zip = new AdmZip();
-        zip.addLocalFile(modelConfigPath);
-        zip.addLocalFile(modelWeightsPath);
+        zip.addLocalFolder(modelDir, 'model');
 
         const zipPath = path.join(projectFolderPath, 'model.zip');
         zip.writeZip(zipPath);
@@ -439,9 +503,9 @@ const contribute = async (req, res) => {
             return res.status(403).json({ message: 'Not authorized to contribute to this project.' });
         }
 
-        // Verify file upload
+        // Verify file upload - expecting a zip file containing complete TensorFlow.js model
         if (!req.files || !req.files.file) {
-            return res.status(400).json({ message: 'No model file uploaded.' });
+            return res.status(400).json({ message: 'No model file uploaded. Please upload a zip file containing model.json and weights.bin files.' });
         }
 
         const modelFile = req.files.file;
@@ -449,6 +513,54 @@ const contribute = async (req, res) => {
 
         if (!sha1Hash) {
             return res.status(400).json({ message: 'SHA1 hash is required.' });
+        }
+
+        // Debug: Log file information
+        console.log('Uploaded file details:');
+        console.log('- Name:', modelFile.name);
+        console.log('- Size:', modelFile.size);
+        console.log('- MIME type:', modelFile.mimetype);
+        console.log('- Data type:', typeof modelFile.data);
+        console.log('- Data length:', modelFile.data ? modelFile.data.length : 'undefined');
+        console.log('- Has mv function:', typeof modelFile.mv);
+
+        // Check if file has data - use different methods to access file data
+        let fileBuffer;
+        if (modelFile.data && modelFile.data.length > 0) {
+            fileBuffer = modelFile.data;
+        } else if (modelFile.tempFilePath && fs.existsSync(modelFile.tempFilePath)) {
+            // File might be stored as a temp file
+            fileBuffer = fs.readFileSync(modelFile.tempFilePath);
+            console.log('Read file from temp path:', modelFile.tempFilePath);
+        } else {
+            return res.status(400).json({ message: 'Uploaded file data is not accessible. Please try uploading again.' });
+        }
+
+        console.log('File buffer length:', fileBuffer.length);
+
+        // More flexible file validation - check for zip magic number
+        const isZipFile = (data) => {
+            if (!data || data.length < 4) return false;
+            // Check for ZIP file magic numbers
+            return (data[0] === 0x50 && data[1] === 0x4B && 
+                   (data[2] === 0x03 && data[3] === 0x04 ||  // Local file header
+                    data[2] === 0x05 && data[3] === 0x06 ||  // End of central directory
+                    data[2] === 0x07 && data[3] === 0x08));  // Spanned archive
+        };
+
+        if (!isZipFile(fileBuffer)) {
+            // If not a zip file, check if it's JSON (maybe they uploaded just model.json)
+            try {
+                const fileContent = fileBuffer.toString('utf8');
+                JSON.parse(fileContent);
+                return res.status(400).json({ 
+                    message: 'You uploaded a JSON file. Please upload a complete zip file containing both model.json and weights.bin files.' 
+                });
+            } catch {
+                return res.status(400).json({ 
+                    message: 'Invalid file format. Please upload a zip file containing the complete TensorFlow.js model (model.json and weights.bin).' 
+                });
+            }
         }
 
         // Setup directories
@@ -465,9 +577,84 @@ const contribute = async (req, res) => {
         // Create directories if they don't exist
         fs.mkdirSync(contribPath, { recursive: true });
 
-        // Save the model file
-        const modelFilePath = path.join(contribPath, `${sha1Hash}.weights.h5`);
-        await modelFile.mv(modelFilePath);
+        // Create a directory for this contribution
+        const contributionDir = path.join(contribPath, `${sha1Hash}.tfjs`);
+        fs.mkdirSync(contributionDir, { recursive: true });
+
+        try {
+            // Save the uploaded file temporarily to debug
+            const tempPath = path.join(contribPath, `temp_${sha1Hash}.zip`);
+            fs.writeFileSync(tempPath, fileBuffer);
+            
+            console.log(`Saved temp file: ${tempPath}`);
+            console.log(`Temp file size: ${fs.statSync(tempPath).size}`);
+
+            // Extract the zip file
+            const zip = new AdmZip(tempPath);
+            const zipEntries = zip.getEntries();
+            
+            console.log('Zip entries found:');
+            zipEntries.forEach(entry => {
+                console.log(`- ${entry.entryName} (${entry.header.size} bytes)`);
+            });
+
+            zip.extractAllTo(contributionDir, true);
+
+            // Clean up temp file
+            fs.unlinkSync(tempPath);
+
+            // Validate that the extracted files include the required TensorFlow.js files
+            const modelJsonPath = path.join(contributionDir, 'model.json');
+            if (!fs.existsSync(modelJsonPath)) {
+                // Cleanup and return error
+                fs.rmSync(contributionDir, { recursive: true, force: true });
+                return res.status(400).json({ 
+                    message: 'Invalid model file. The zip must contain model.json file.' 
+                });
+            }
+
+            // Check for weights files by reading model.json
+            const modelJson = JSON.parse(fs.readFileSync(modelJsonPath, 'utf8'));
+            const weightsManifest = modelJson.weightsManifest || [];
+            const missingWeights = [];
+
+            for (const manifest of weightsManifest) {
+                for (const weightPath of manifest.paths || []) {
+                    const weightFile = path.join(contributionDir, weightPath);
+                    if (!fs.existsSync(weightFile)) {
+                        missingWeights.push(weightPath);
+                    }
+                }
+            }
+
+            if (missingWeights.length > 0) {
+                // Cleanup and return error
+                fs.rmSync(contributionDir, { recursive: true, force: true });
+                return res.status(400).json({ 
+                    message: `Invalid model file. Missing weight files: ${missingWeights.join(', ')}` 
+                });
+            }
+
+            console.log(`Successfully extracted TensorFlow.js model to: ${contributionDir}`);
+            
+        } catch (extractError) {
+            console.error('Error extracting model file:', extractError);
+            
+            // More specific error handling
+            if (extractError.message.includes('Invalid or unsupported zip format')) {
+                return res.status(400).json({ 
+                    message: 'The uploaded file is not a valid zip file. Please ensure you are uploading a properly compressed zip file containing your TensorFlow.js model.' 
+                });
+            }
+            
+            // Cleanup on error
+            if (fs.existsSync(contributionDir)) {
+                fs.rmSync(contributionDir, { recursive: true, force: true });
+            }
+            return res.status(400).json({ 
+                message: 'Error extracting model file: ' + extractError.message 
+            });
+        }
 
         // Run contribution script
         const projectDir = path.join(__dirname, '..', 'py');
@@ -559,20 +746,20 @@ const getJson = async (req, res) => {
             return res.status(403).json({ message: 'Access denied.' });
         }
 
-        // Define paths
+        // Define paths for TensorFlow.js format
         const userFolderPath = path.join(__dirname, '..', 'py', 'users', project.owner.username);
         const projectFolderPath = path.join(userFolderPath, projectName);
-        const modelConfigPath = path.join(projectFolderPath, 'model_config.json');
+        const modelJsonPath = path.join(projectFolderPath, 'model', 'model.json');
 
-        // Check if model_config.json exists
-        if (!fs.existsSync(modelConfigPath)) {
-            return res.status(404).json({ message: 'model_config.json not found.' });
+        // Check if model.json exists
+        if (!fs.existsSync(modelJsonPath)) {
+            return res.status(404).json({ message: 'model.json not found.' });
         }
 
-        // Send the model_config.json file
-        return res.sendFile(modelConfigPath, (err) => {
+        // Send the model.json file
+        return res.sendFile(modelJsonPath, (err) => {
             if (err) {
-                console.error('Error sending model_config.json:', err.message);
+                console.error('Error sending model.json:', err.message);
                 return res.status(500).json({ message: 'Error sending the model configuration.', error: err.message });
             }
         });
