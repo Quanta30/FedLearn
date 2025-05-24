@@ -29,11 +29,22 @@ def main(username, projectname):
 
     # Create project and contrib directories if they don't exist
     os.makedirs(contrib_dir, exist_ok=True)
+    
+    print(f"Project directory: {project_dir}")
+    print(f"Contrib directory: {contrib_dir}")
 
-    # Read values from config.txt in the root of the VS Code folder
-    config_file = "config.txt"
+    # Read values from config.txt in the data folder structure
+    config_file = os.path.join("..", "data", "users", username, projectname, "py", "config.txt")
+    print(f"Looking for config file at: {config_file}")
+    
+    if not os.path.exists(config_file):
+        print(f"Error: Config file not found at {config_file}")
+        return
+    
     with open(config_file, "r") as f:
-        config_values = dict(line.strip().split("=") for line in f)
+        config_values = dict(line.strip().split("=") for line in f if line.strip() and "=" in line)
+
+    print(f"Config values loaded: {config_values}")
 
     # Get configuration values
     activation_function = config_values.get("activation_function", "relu")
@@ -48,6 +59,8 @@ def main(username, projectname):
     if len(input_shape) == 2:
         input_shape += (1,)  # Add channel dimension for grayscale images
 
+    print(f"Creating model with: input_shape={input_shape}, layers={num_layers}, units={units_per_layer}")
+
     # Initialize the required network with random weights
     model = YourNetworkClass(
         input_shape, activation_function, dropout_rate,
@@ -56,12 +69,18 @@ def main(username, projectname):
     model.initialize_weights()
 
     # Store the weights from the Sequential model
-    model.model.save_weights(os.path.join(project_dir, "model.weights.h5"))
+    weights_path = os.path.join(project_dir, "model.weights.h5")
+    model.model.save_weights(weights_path)
+    print(f"Saved model weights to: {weights_path}")
 
     # Save the model configuration in JSON format
+    config_path = os.path.join(project_dir, "model_config.json")
     model_config = model.model.to_json()
-    with open(os.path.join(project_dir, "model_config.json"), "w") as json_file:
+    with open(config_path, "w") as json_file:
         json_file.write(model_config)
+    print(f"Saved model config to: {config_path}")
+    
+    print("Model initialization completed successfully!")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Initialize project with configuration")

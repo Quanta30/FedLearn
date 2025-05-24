@@ -72,7 +72,7 @@ num_classes=${num_classes}
         // Execute Python code
         const venvActivatePath = path.join(__dirname, '..', 'py', '.venv', 'bin', 'activate');
         const initScriptPath = path.join(__dirname, '..', 'py', 'init.py');
-        const command = `cd ${path.join(__dirname, '..', 'py')} && source ${venvActivatePath} && python ${initScriptPath} ${user.username} ${name}`;
+        const command = `cd ${path.join(__dirname, '..', 'py')} && . ${venvActivatePath} && python ${initScriptPath} ${user.username} ${name}`;
 
         exec(command, async (error, stdout, stderr) => {
             if (error) {
@@ -82,6 +82,18 @@ num_classes=${num_classes}
 
             console.log(`Python script output: ${stdout}`);
             console.error(`Python script error output: ${stderr}`);
+
+            // Check if model files were created after init script
+            const pyUserPath = path.join(__dirname, '..', 'py', 'users', user.username);
+            const pyProjectPath = path.join(pyUserPath, name);
+            console.log(`Checking if model files were created in: ${pyProjectPath}`);
+            
+            if (fs.existsSync(pyProjectPath)) {
+                const filesInPyProject = fs.readdirSync(pyProjectPath);
+                console.log(`Files created by init script: ${filesInPyProject.join(', ')}`);
+            } else {
+                console.log(`Python project directory was not created: ${pyProjectPath}`);
+            }
 
             try {
                 await newProject.save();
@@ -310,6 +322,21 @@ const getModel = async (req, res) => {
         const modelConfigPath = path.join(projectFolderPath, 'model_config.json');
         const modelWeightsPath = path.join(projectFolderPath, 'model.weights.h5');
 
+        // Add debugging logs
+        console.log(`Looking for model files in: ${projectFolderPath}`);
+        console.log(`Model config path: ${modelConfigPath}`);
+        console.log(`Model weights path: ${modelWeightsPath}`);
+        console.log(`Config exists: ${fs.existsSync(modelConfigPath)}`);
+        console.log(`Weights exists: ${fs.existsSync(modelWeightsPath)}`);
+        
+        // List all files in the project directory for debugging
+        if (fs.existsSync(projectFolderPath)) {
+            const filesInProject = fs.readdirSync(projectFolderPath);
+            console.log(`Files in project directory: ${filesInProject.join(', ')}`);
+        } else {
+            console.log(`Project directory does not exist: ${projectFolderPath}`);
+        }
+
         if (!fs.existsSync(modelConfigPath) || !fs.existsSync(modelWeightsPath)) {
             return res.status(404).json({ message: 'Model files not found.' });
         }
@@ -331,7 +358,8 @@ const getModel = async (req, res) => {
             fs.unlinkSync(zipPath);
         });
     } catch (error) {
-        res.status(400).json({ message: 'Error retrieving model', error });
+        console.error('Error in getModel:', error);
+        res.status(400).json({ message: 'Error retrieving model', error: error.message });
     }
 };
 
@@ -354,7 +382,7 @@ const testModel = async (req, res) => {
 
         const scriptPath = path.join(__dirname, '..', 'py', 'test.py');
         const venvActivatePath = path.join(__dirname, '..', 'py', '.venv', 'bin', 'activate');
-        const command = `cd ${path.join(__dirname, '..', 'py')} && source ${venvActivatePath} && python ${scriptPath} ${username} ${projectName}`;
+        const command = `cd ${path.join(__dirname, '..', 'py')} && . ${venvActivatePath} && python ${scriptPath} ${username} ${projectName}`;
 
         exec(command, async (error, stdout, stderr) => {
             if (error) {
@@ -447,7 +475,7 @@ const contribute = async (req, res) => {
         const scriptPath = path.join(projectDir, 'contribution.py');
         const username = project.owner.username;
 
-        const command = `cd ${projectDir} && source ${venvActivate} && python ${scriptPath} ${username} ${projectName} ${sha1Hash}`;
+        const command = `cd ${projectDir} && . ${venvActivate} && python ${scriptPath} ${username} ${projectName} ${sha1Hash}`;
 
         exec(command, async (error, stdout, stderr) => {
             if (error) {

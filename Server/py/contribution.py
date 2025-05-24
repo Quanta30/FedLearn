@@ -44,6 +44,14 @@ def main(username, projectname, hash_value):
         print(f"Existing model weights path: {model_weights_path}")
         print(f"Contribution weights path: {new_model_weights_path}")
 
+        # Add debug logging to check if directories and files exist
+        print(f"Does project directory exist? {os.path.exists(project_dir)}")
+        print(f"Does contrib directory exist? {os.path.exists(contrib_dir)}")
+        if os.path.exists(contrib_dir):
+            files_in_contrib = os.listdir(contrib_dir)
+            print(f"Files in contrib directory: {files_in_contrib}")
+        print(f"Does contribution file exist? {os.path.exists(new_model_weights_path)}")
+
         # Validate paths
         if not os.path.exists(model_config_path):
             print(f"Error: Model configuration file not found at {model_config_path}.")
