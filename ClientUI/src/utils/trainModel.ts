@@ -30,11 +30,33 @@ interface TrainModelResult {
 }
 
 // Default MNIST-like model architecture
+// ...existing code...
+
+// Default MNIST-like model architecture
 const createModel = (numClasses: number, params: TrainingParams): tf.Sequential => {
   const model = tf.sequential();
   
-  // Input layer - assuming 28x28 grayscale images for MNIST
-  model.add(tf.layers.flatten({ inputShape: [28, 28, 1] }));
+  // Input layer - accept 28x28x1 images directly (no flatten layer)
+  // The backend test script will feed images in this format
+  model.add(tf.layers.conv2d({
+    inputShape: [28, 28, 1],
+    filters: 32,
+    kernelSize: 3,
+    activation: params.activationFunction as any
+  }));
+  
+  model.add(tf.layers.maxPooling2d({ poolSize: 2 }));
+  
+  model.add(tf.layers.conv2d({
+    filters: 64,
+    kernelSize: 3,
+    activation: params.activationFunction as any
+  }));
+  
+  model.add(tf.layers.maxPooling2d({ poolSize: 2 }));
+  
+  // Flatten before dense layers
+  model.add(tf.layers.flatten());
   
   // Hidden layers
   for (let i = 0; i < params.numLayers; i++) {
@@ -62,6 +84,8 @@ const createModel = (numClasses: number, params: TrainingParams): tf.Sequential 
   
   return model;
 };
+
+// ...existing code...
 
 const preprocessImage = async (file: File): Promise<tf.Tensor> => {
   return new Promise((resolve) => {

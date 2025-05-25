@@ -308,11 +308,11 @@ const addCollaborator = async (req, res) => {
 };
 
 const uploadTestFile = async (req, res) => {
-    const { projectId } = req.params;
+    const { projectName } = req.params;
     const ownerEmail = req.email;
 
     try {
-        const project = await Project.findById(projectId);
+        const project = await Project.findOne({ name: projectName });
         if (!project) {
             return res.status(404).json({ message: 'Project not found.' });
         }
@@ -322,34 +322,125 @@ const uploadTestFile = async (req, res) => {
             return res.status(403).json({ message: 'Only the project owner can upload test files.' });
         }
 
-        if (!req.files || !req.files.testFile) {
-            return res.status(400).json({ message: 'No test file uploaded.' });
+        if (!req.files || !req.files.testSetZip) {
+            return res.status(400).json({ message: 'No test file uploaded. Please upload a zip file containing your test dataset.' });
         }
 
-        const testFile = req.files.testFile;
+        const testZipFile = req.files.testSetZip;
+        
+        // Debug: Log file information
+        console.log('Uploaded test file details:');
+        console.log('- Name:', testZipFile.name);
+        console.log('- Size:', testZipFile.size);
+        console.log('- MIME type:', testZipFile.mimetype);
+
+        // Get file buffer similar to contribute function
+        let fileBuffer;
+        if (testZipFile.data && testZipFile.data.length > 0) {
+            fileBuffer = testZipFile.data;
+        } else if (testZipFile.tempFilePath && fs.existsSync(testZipFile.tempFilePath)) {
+            fileBuffer = fs.readFileSync(testZipFile.tempFilePath);
+            console.log('Read test file from temp path:', testZipFile.tempFilePath);
+        } else {
+            return res.status(400).json({ message: 'Uploaded test file data is not accessible. Please try uploading again.' });
+        }
+
+        // Validate zip file
+        const isZipFile = (data) => {
+            if (!data || data.length < 4) return false;
+            return (data[0] === 0x50 && data[1] === 0x4B && 
+                   (data[2] === 0x03 && data[3] === 0x04 ||
+                    data[2] === 0x05 && data[3] === 0x06 ||
+                    data[2] === 0x07 && data[3] === 0x08));
+        };
+
+        if (!isZipFile(fileBuffer)) {
+            return res.status(400).json({ message: 'Invalid file format. Please upload a zip file containing your test dataset.' });
+        }
+
         const userFolderPath = path.join(__dirname, '..', 'data', 'users', user.username);
         const projectFolderPath = path.join(userFolderPath, project.name);
-        const testFilePath = path.join(projectFolderPath, 'test');
+        const testDirPath = path.join(projectFolderPath, 'test');
 
-        if (!fs.existsSync(userFolderPath)) {
-            fs.mkdirSync(userFolderPath, { recursive: true });
+        // Create directories if they don't exist
+        fs.mkdirSync(userFolderPath, { recursive: true });
+        fs.mkdirSync(projectFolderPath, { recursive: true });
+        
+        // Remove existing test directory if it exists
+        if (fs.existsSync(testDirPath)) {
+            fs.rmSync(testDirPath, { recursive: true, force: true });
         }
+        fs.mkdirSync(testDirPath, { recursive: true });
 
-        if (!fs.existsSync(projectFolderPath)) {
-            fs.mkdirSync(projectFolderPath, { recursive: true });
-        }
+        try {
+            // Save zip file temporarily
+            const tempZipPath = path.join(projectFolderPath, 'temp_test.zip');
+            fs.writeFileSync(tempZipPath, fileBuffer);
 
-        testFile.mv(testFilePath, (err) => {
-            if (err) {
-                return res.status(500).json({ message: 'Error uploading test file', error: err });
+            console.log(`Saved temp test zip: ${tempZipPath}`);
+            console.log(`Temp file size: ${fs.statSync(tempZipPath).size}`);
+
+            // Extract the zip file
+            const zip = new AdmZip(tempZipPath);
+            const zipEntries = zip.getEntries();
+            
+            console.log('Test zip entries found:');
+            zipEntries.forEach(entry => {
+                console.log(`- ${entry.entryName} (${entry.header.size} bytes)`);
+            });
+
+            // Extract to test directory
+            zip.extractAllTo(testDirPath, true);
+
+            // Clean up temp file
+            fs.unlinkSync(tempZipPath);
+
+            // Verify extraction - check if we have labeled folders with images
+            const extractedItems = fs.readdirSync(testDirPath);
+            console.log('Extracted items in test directory:', extractedItems);
+
+            // Check if we have the expected structure (labeled folders)
+            let hasValidStructure = false;
+            for (const item of extractedItems) {
+                const itemPath = path.join(testDirPath, item);
+                if (fs.statSync(itemPath).isDirectory()) {
+                    const filesInFolder = fs.readdirSync(itemPath);
+                    if (filesInFolder.length > 0) {
+                        hasValidStructure = true;
+                        console.log(`Found label folder '${item}' with ${filesInFolder.length} files`);
+                    }
+                }
             }
 
-            res.status(200).json({ message: 'Test file uploaded successfully!' });
-        });
+            if (!hasValidStructure) {
+                fs.rmSync(testDirPath, { recursive: true, force: true });
+                return res.status(400).json({ 
+                    message: 'Invalid test dataset structure. Please ensure your zip contains labeled folders with images inside each folder.' 
+                });
+            }
+
+            console.log(`Successfully extracted test dataset to: ${testDirPath}`);
+            res.status(200).json({ message: 'Test files uploaded successfully!' });
+
+        } catch (extractError) {
+            console.error('Error extracting test file:', extractError);
+            
+            // Clean up on error
+            if (fs.existsSync(testDirPath)) {
+                fs.rmSync(testDirPath, { recursive: true, force: true });
+            }
+            
+            return res.status(400).json({ 
+                message: 'Error extracting test file: ' + extractError.message 
+            });
+        }
+
     } catch (error) {
-        res.status(400).json({ message: 'Error uploading test file', error });
+        console.error('Error in uploadTestFile:', error);
+        res.status(400).json({ message: 'Error uploading test file', error: error.message });
     }
 };
+
 const getModel = async (req, res) => {
     const { projectName } = req.params;
     const userEmail = req.email;
@@ -442,38 +533,157 @@ const testModel = async (req, res) => {
         if (!user || !project.owner.equals(user._id)) {
             return res.status(403).json({ message: 'Only the project owner can test the model.' });
         }
-        const username = user.username;
 
+        // Check if model exists
+        const userFolderPath = path.join(__dirname, '..', 'py', 'users', user.username);
+        const projectFolderPath = path.join(userFolderPath, projectName);
+        const modelDir = path.join(projectFolderPath, 'model');
+
+        console.log(`Checking model directory: ${modelDir}`);
+        if (!fs.existsSync(modelDir)) {
+            return res.status(404).json({ message: 'No model found. Please make a contribution first.' });
+        }
+
+        // Verify model files exist
+        const modelJsonPath = path.join(modelDir, 'model.json');
+        if (!fs.existsSync(modelJsonPath)) {
+            return res.status(404).json({ message: 'Model files are incomplete. Please make a new contribution.' });
+        }
+
+        // Check if test data exists
+        const testDataPath = path.join(__dirname, '..', 'data', 'users', user.username, projectName, 'test');
+        console.log(`Checking test data directory: ${testDataPath}`);
+        
+        if (!fs.existsSync(testDataPath)) {
+            return res.status(404).json({ message: 'No test data found. Please upload test files first.' });
+        }
+
+        // Verify test data structure and log details
+        const testItems = fs.readdirSync(testDataPath);
+        console.log(`Test data items found: ${testItems.join(', ')}`);
+        
+        let hasValidTestStructure = false;
+        let labelFolders = [];
+        
+        for (const item of testItems) {
+            const itemPath = path.join(testDataPath, item);
+            if (fs.statSync(itemPath).isDirectory()) {
+                const filesInFolder = fs.readdirSync(itemPath);
+                if (filesInFolder.length > 0) {
+                    hasValidTestStructure = true;
+                    labelFolders.push(`${item} (${filesInFolder.length} files)`);
+                }
+            }
+        }
+
+        console.log(`Label folders found: ${labelFolders.join(', ')}`);
+
+        if (!hasValidTestStructure) {
+            return res.status(400).json({ message: 'Invalid test data structure. Please upload labeled folders with images.' });
+        }
+
+        const username = user.username;
         const scriptPath = path.join(__dirname, '..', 'py', 'test.py');
         const venvActivatePath = path.join(__dirname, '..', 'py', '.venv', 'bin', 'activate');
-        const command = `cd ${path.join(__dirname, '..', 'py')} && . ${venvActivatePath} && python ${scriptPath} ${username} ${projectName}`;
+        
+        // Add environment variable to suppress TensorFlow warnings
+        const command = `cd ${path.join(__dirname, '..', 'py')} && . ${venvActivatePath} && TF_CPP_MIN_LOG_LEVEL=2 python ${scriptPath} ${username} ${projectName}`;
 
-        exec(command, async (error, stdout, stderr) => {
+        console.log(`Executing test command: ${command}`);
+
+        exec(command, { timeout: 300000 }, async (error, stdout, stderr) => {
+            console.log(`Python script stdout: ${stdout}`);
+            console.log(`Python script stderr: ${stderr}`);
+            
             if (error) {
                 console.error(`Error executing Python script: ${error.message}`);
-                return res.status(500).json({ message: 'Error executing Python script', error: error.message });
+                
+                // Check if it's a timeout error
+                if (error.code === 'ETIMEDOUT') {
+                    return res.status(408).json({ 
+                        message: 'Test script timed out. The model or test data might be too large.',
+                        error: 'Timeout after 5 minutes'
+                    });
+                }
+                
+                return res.status(500).json({ 
+                    message: 'Error executing Python script', 
+                    error: error.message,
+                    stdout: stdout,
+                    stderr: stderr 
+                });
             }
 
-            console.log(`Python script output: ${stdout}`);
-            console.error(`Python script error output: ${stderr}`);
-
+            // Check if the script completed successfully by looking for accuracy file
             const accuracyFilePath = path.join(__dirname, '..', 'py', 'users', username, projectName, 'accuracy.txt');
+            console.log(`Looking for accuracy file at: ${accuracyFilePath}`);
+            
             if (!fs.existsSync(accuracyFilePath)) {
-                return res.status(404).json({ message: 'Accuracy file not found.' });
+                console.log(`Accuracy file not found. Script may have failed.`);
+                
+                // Check if there are any error indicators in stdout/stderr
+                const errorIndicators = ['error', 'exception', 'failed', 'traceback'];
+                const hasError = errorIndicators.some(indicator => 
+                    stdout.toLowerCase().includes(indicator) || stderr.toLowerCase().includes(indicator)
+                );
+                
+                if (hasError) {
+                    return res.status(500).json({ 
+                        message: 'Test script failed with errors.',
+                        stdout: stdout,
+                        stderr: stderr
+                    });
+                }
+                
+                return res.status(404).json({ 
+                    message: 'Test completed but accuracy file was not generated. Check the test script logs.',
+                    stdout: stdout,
+                    stderr: stderr
+                });
             }
-            console.log("Accuracy : ");
-            const accuracy = fs.readFileSync(accuracyFilePath, 'utf8').trim();
-            project.accuracy = parseFloat(accuracy);
 
             try {
+                console.log("Reading accuracy from:", accuracyFilePath);
+                const accuracy = fs.readFileSync(accuracyFilePath, 'utf8').trim();
+                console.log(`Raw accuracy value: "${accuracy}"`);
+                
+                const accuracyValue = parseFloat(accuracy);
+
+                if (isNaN(accuracyValue)) {
+                    return res.status(400).json({ 
+                        message: `Invalid accuracy value: "${accuracy}". Expected a number.`,
+                        stdout: stdout,
+                        stderr: stderr
+                    });
+                }
+
+                project.accuracy = accuracyValue;
+
                 await project.save();
-                res.status(200).json({ message: 'Model tested successfully!', accuracy: project.accuracy });
-            } catch (error) {
-                res.status(400).json({ message: 'Error updating project accuracy', error });
+                console.log(`Successfully saved accuracy: ${accuracyValue}`);
+                
+                res.status(200).json({ 
+                    message: 'Model tested successfully!', 
+                    accuracy: project.accuracy,
+                    details: {
+                        testDataPath: testDataPath,
+                        labelFolders: labelFolders,
+                        stdout: stdout
+                    }
+                });
+                
+            } catch (saveError) {
+                console.error('Error saving accuracy:', saveError);
+                res.status(400).json({ 
+                    message: 'Error updating project accuracy', 
+                    error: saveError.message,
+                    accuracy: accuracy
+                });
             }
         });
     } catch (error) {
-        res.status(400).json({ message: 'Error testing model', error });
+        console.error('Error in testModel:', error);
+        res.status(400).json({ message: 'Error testing model', error: error.message });
     }
 };
 
